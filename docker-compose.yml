@@ -1,0 +1,97 @@
+services:
+  node-server:
+    container_name: node-server
+    image: node:18
+    working_dir: /app
+    volumes:
+      - ./bff-server:/app
+    ports:
+      - "3000:3000"
+    command: sh -c "node server.js"
+    networks:
+      - keycloak-net
+
+  node-server-backend:
+    container_name: node-server-backend
+    image: node:18
+    working_dir: /app
+    volumes:
+      - ./movie-api:/app
+    ports:
+      - "3001:3001"
+    command: sh -c "node server.js"
+    networks:
+      - keycloak-net
+
+  postgres:
+    container_name: postgres
+    image: postgres:16
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - ./keycloak/data:/var/lib/postgresql/data
+    networks:
+      - keycloak-net
+
+  keycloak:
+    container_name: keycloak
+    image: quay.io/keycloak/keycloak:24.0.3
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: secret
+      KC_DB_URL_HOST: postgres
+      KC_DB_SCHEMA: public
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # KC_HTTP_RELATIVE_PATH: /
+      # KC_HOSTNAME_URL: http://localhost:8080/
+      # KC_HOSTNAME_STRICT: false
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - keycloak-net
+    healthcheck:
+      test: [ "CMD-SHELL", 'exec 3<>/dev/tcp/localhost/8080; echo -e "GET /health/ready HTTP/1.1\nhost: localhost:8080\n" >&3; timeout --preserve-status 1 cat <&3 | grep -m 1 status | grep -m 1 UP; ERROR=$?; exec 3<&-; exec 3>&-; exit $ERROR' ]
+
+  oauth2-proxy:
+    container_name: oauth2-proxy
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.2
+    command: --config /oauth2-proxy.cfg
+    # command: [ "oauth2-proxy" ] # ⬅️ Обязательно!
+    volumes:
+      - ./oauth2-proxy.cfg:/oauth2-proxy.cfg
+    ports:
+      - 4180:4180
+    environment:
+      - OAUTH2_PROXY_PROVIDER=oidc
+      - OAUTH2_PROXY_CLIENT_ID=gateway
+      - OAUTH2_PROXY_CLIENT_SECRET=7mpZEv46VgfXyRyManydlrrNm8THdcgW
+      # - OAUTH2_PROXY_OIDC_ISSUER_URL=http://keycloak:8080/realms/myrealm
+      - OAUTH2_PROXY_COOKIE_SECRET=YzV2Rz8pV3!u@pJwqD6LrE#eK0mC9sAb
+      - OAUTH2_PROXY_SESSION_STORE_TYPE=redis
+      - OAUTH2_PROXY_REDIS_CONNECTION_URL=redis://redis:6379
+      # http://localhost:8080/realms/myrealm/.well-known/openid-configuration
+      - OAUTH2_PROXY_PASS_ACCESS_TOKEN=true
+      - OAUTH2_PROXY_SET_XAUTHREQUEST=true
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - keycloak-net
+
+  redis:
+    container_name: redis
+    image: redis:latest
+    ports:
+      - 6379:6379
+    networks:
+      - keycloak-net
+
+networks:
+  keycloak-net:
